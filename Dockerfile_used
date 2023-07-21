@@ -11,3 +11,4 @@ COPY requirements.txt /workspace
 RUN pip --no-cache-dir install -r /workspace/requirements.txt
 RUN apt install default-jre
 RUN apt install gnome-software
+RUN apt-get install python3-tk
