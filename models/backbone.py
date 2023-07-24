@@ -87,6 +87,7 @@ class Backbone(BackboneBase):
                  return_interm_layers: bool,
                  dilation: bool,
                  local_path: str = ''):
+        #---
         if local_path:
             backbone_weights = torch.load(local_path, map_location=torch.device('cpu'))["state_dict"]
             backbone = getattr(torchvision.models, name)(
@@ -108,6 +109,7 @@ class Backbone(BackboneBase):
             backbone = getattr(torchvision.models, name)(
                 replace_stride_with_dilation=[False, False, dilation],
                 pretrained=is_main_process(), norm_layer=FrozenBatchNorm2d)
+        #---
 
         num_channels = 512 if name in ('resnet18', 'resnet34') else 2048
         super().__init__(backbone, train_backbone, num_channels, return_interm_layers)
