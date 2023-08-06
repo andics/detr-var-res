@@ -10,6 +10,9 @@ datasets/data/
 experiment-*
 *.tmp
 *.pkl
+*.onnx
+*.jpg
+*.png
 **/.mypy_cache/*
 .mypy_cache/*
 not_tracked_dir/

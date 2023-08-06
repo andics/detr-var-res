@@ -152,6 +152,51 @@ for idx, ax_i, (xmin, ymin, xmax, ymax) in zip(keep.nonzero(), axs.T, bboxes_sca
 fig.tight_layout()
 
 # Save the figure in local folder as png
-fig.savefig('attention_fig.png')
+fig.savefig('attention_decoder_fig.png')
 
-time.sleep(10)
+# output of the CNN
+f_map = conv_features['0']
+print("Encoder attention:      ", enc_attn_weights[0].shape)
+print("Feature map:            ", f_map.tensors.shape)
+# get the HxW shape of the feature maps of the CNN
+shape = f_map.tensors.shape[-2:]
+# and reshape the self-attention to a more interpretable shape
+sattn = enc_attn_weights[0].reshape(shape + shape)
+print("Reshaped self-attention:", sattn.shape)
+
+# downsampling factor for the CNN, is 32 for DETR and 16 for DETR DC5
+fact = 32
+
+# let's select 4 reference points for visualization
+idxs = [(200, 200), (280, 400), (200, 600), (440, 800),]
+
+# here we create the canvas
+fig = plt.figure(constrained_layout=True, figsize=(25 * 0.7, 8.5 * 0.7))
+# and we add one plot per reference point
+gs = fig.add_gridspec(2, 4)
+axs = [
+    fig.add_subplot(gs[0, 0]),
+    fig.add_subplot(gs[1, 0]),
+    fig.add_subplot(gs[0, -1]),
+    fig.add_subplot(gs[1, -1]),
+]
+
+# for each one of the reference points, let's plot the self-attention
+# for that point
+for idx_o, ax in zip(idxs, axs):
+    idx = (idx_o[0] // fact, idx_o[1] // fact)
+    ax.imshow(sattn[..., idx[0], idx[1]], cmap='cividis', interpolation='nearest')
+    ax.axis('off')
+    ax.set_title(f'self-attention{idx_o}')
+
+# and now let's add the central image, with the reference points as red circles
+fcenter_ax = fig.add_subplot(gs[:, 1:-1])
+fcenter_ax.imshow(im)
+for (y, x) in idxs:
+    scale = im.height / img.shape[-2]
+    x = ((x // fact) + 0.5) * fact
+    y = ((y // fact) + 0.5) * fact
+    fcenter_ax.add_patch(plt.Circle((x * scale, y * scale), fact // 2, color='r'))
+    fcenter_ax.axis('off')
+
+fig.savefig('attention_encoder_fig.png')
