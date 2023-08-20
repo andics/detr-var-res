@@ -12,6 +12,7 @@ experiment-*
 *.pkl
 *.onnx
 *.jpg
+*.jpeg
 *.png
 **/.mypy_cache/*
 .mypy_cache/*
