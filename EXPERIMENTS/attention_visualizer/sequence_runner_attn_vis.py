@@ -153,6 +153,9 @@ class InferenceHandler:
                 # Intersect the current set of names with the common_images set
                 common_images = common_images.intersection(stripped_names)
 
+        # Sort the set common_images
+        common_images = sorted(common_images)
+
         # Now common_images contains only image names that exist in all dataset paths
 
         # Prepare a list for each dataset path with full image paths that are common in all datasets
@@ -186,18 +189,42 @@ class InferenceHandler:
                 img = self.transform(img_pil).unsqueeze(0)
 
                 # arrays in which we save the featuremaps
-                conv_features, enc_attn_weights, dec_attn_weights = [], [], []
+                conv_features = []
+                enc_self_attn_weights_l0, enc_self_attn_weights_l2, enc_self_attn_weights_l5 = [], [], []
+                dec_mult_head_attn_weights_l0, dec_mult_head_attn_weights_l2, dec_mult_head_attn_weights_l5 = [], [], []
+                dec_self_attn_weights_l0, dec_self_attn_weights_l2, dec_self_attn_weights_l5 = [], [], []
 
                 hooks = [
                     model.backbone[-2].register_forward_hook(
                         lambda self, input, output: conv_features.append(output)
                     ),
-                    model.transformer.encoder.layers[-1].self_attn.register_forward_hook(
-                        lambda self, input, output: enc_attn_weights.append(output[1])
+                    model.transformer.encoder.layers[0].self_attn.register_forward_hook(
+                        lambda self, input, output: enc_self_attn_weights_l0.append(output[1])
                     ),
-                    model.transformer.decoder.layers[-1].multihead_attn.register_forward_hook(
-                        lambda self, input, output: dec_attn_weights.append(output[1])
+                    model.transformer.encoder.layers[2].self_attn.register_forward_hook(
+                        lambda self, input, output: enc_self_attn_weights_l2.append(output[1])
                     ),
+                    model.transformer.encoder.layers[5].self_attn.register_forward_hook(
+                        lambda self, input, output: enc_self_attn_weights_l5.append(output[1])
+                    ),
+                    model.transformer.decoder.layers[0].multihead_attn.register_forward_hook(
+                        lambda self, input, output: dec_mult_head_attn_weights_l0.append(output[1])
+                    ),
+                    model.transformer.decoder.layers[2].multihead_attn.register_forward_hook(
+                        lambda self, input, output: dec_mult_head_attn_weights_l2.append(output[1])
+                    ),
+                    model.transformer.decoder.layers[5].multihead_attn.register_forward_hook(
+                        lambda self, input, output: dec_mult_head_attn_weights_l5.append(output[1])
+                    ),
+                    model.transformer.decoder.layers[0].self_attn.register_forward_hook(
+                        lambda self, input, output: dec_self_attn_weights_l0.append(output)
+                    ),
+                    model.transformer.decoder.layers[2].self_attn.register_forward_hook(
+                        lambda self, input, output: dec_self_attn_weights_l2.append(output[1])
+                    ),
+                    model.transformer.decoder.layers[5].self_attn.register_forward_hook(
+                        lambda self, input, output: dec_self_attn_weights_l5.append(output[1])
+                    )
                 ]
 
                 # propagate through the model
@@ -233,8 +260,20 @@ class InferenceHandler:
                 # ---PLOT-DECODER-ATTENTION---
                 # don't need the list anymore
                 conv_features = conv_features[0]
-                enc_attn_weights = enc_attn_weights[0]
-                dec_attn_weights = dec_attn_weights[0]
+                enc_self_attn_weights_l0 = enc_self_attn_weights_l0[0]
+                dec_mult_head_attn_weights_l0 = dec_mult_head_attn_weights_l0[0]
+                dec_self_attn_weights_l0 = dec_self_attn_weights_l0[0]
+                enc_self_attn_weights_l2 = enc_self_attn_weights_l2[0]
+                dec_mult_head_attn_weights_l2 = dec_mult_head_attn_weights_l2[0]
+                dec_self_attn_weights_l2 = dec_self_attn_weights_l2[0]
+                enc_self_attn_weights_l5 = enc_self_attn_weights_l5[0]
+                dec_mult_head_attn_weights_l5 = dec_mult_head_attn_weights_l5[0]
+                dec_self_attn_weights_l5 = dec_self_attn_weights_l5[0]
+
+                '''
+                enc_self_attn_weights_l0 = enc_self_attn_weights_l2
+                dec_mult_head_attn_weights_l0 = dec_mult_head_attn_weights_l2
+                '''
 
                 # get the feature map shape
                 h, w = conv_features['0'].tensors.shape[-2:]
@@ -242,7 +281,7 @@ class InferenceHandler:
                 fig_2, ax_2 = plt.subplots(ncols=len(bboxes_scaled), nrows=2, figsize=(22, 7))
                 for idx, ax_i, (xmin, ymin, xmax, ymax) in zip(keep, ax_2.T, bboxes_scaled):
                     axs = ax_i[0]
-                    axs.imshow(dec_attn_weights[0, idx].view(h, w))
+                    axs.imshow(dec_mult_head_attn_weights_l0[0, idx].view(h, w))
                     axs.axis('off')
                     axs.set_title(f'query id: {idx.item()}')
 
@@ -270,12 +309,12 @@ class InferenceHandler:
                 #---PLOT-ENCODER-ATTENTION---
                 # output of the CNN
                 f_map = conv_features['0']
-                print("Encoder attention:      ", enc_attn_weights[0].shape)
+                print("Encoder attention:      ", enc_self_attn_weights_l0[0].shape)
                 print("Feature map:            ", f_map.tensors.shape)
                 # get the HxW shape of the feature maps of the CNN
                 shape = f_map.tensors.shape[-2:]
                 # and reshape the self-attention to a more interpretable shape
-                sattn = enc_attn_weights[0].reshape(shape + shape)
+                sattn = enc_self_attn_weights_l0[0].reshape(shape + shape)
                 print("Reshaped self-attention:", sattn.shape)
 
                 # downsampling factor for the CNN, is 32 for DETR and 16 for DETR DC5

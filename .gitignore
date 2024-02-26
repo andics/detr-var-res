@@ -4,6 +4,9 @@
 .DS_Store
 .*.swp
 *.pth
+*.pt
+core.*
+log.*
 **/__pycache__/**
 .ipynb_checkpoints/
 datasets/data/
