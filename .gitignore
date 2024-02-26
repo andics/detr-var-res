@@ -4,6 +4,9 @@
 .DS_Store
 .*.swp
 *.pth
+*.pt
+core.*
+log.*
 **/__pycache__/**
 .ipynb_checkpoints/
 datasets/data/
@@ -12,6 +15,7 @@ experiment-*
 *.pkl
 *.onnx
 *.jpg
+*.jpeg
 *.png
 **/.mypy_cache/*
 .mypy_cache/*
