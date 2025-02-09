@@ -1,12 +1,11 @@
 import torch
-
 from PIL import Image, ImageDraw
 from collections import OrderedDict
-
 import torchvision.transforms as T
 import argparse
+import numpy as np
 
-# Define the colors for visualization
+# Define the colors for visualization (used for semi-transparent overlays)
 COLORS = [[0.000, 0.447, 0.741], [0.850, 0.325, 0.098], [0.929, 0.694, 0.125],
           [0.494, 0.184, 0.556], [0.466, 0.674, 0.188], [0.301, 0.745, 0.933]]
 
@@ -36,43 +35,51 @@ transform = T.Compose([
 ])
 
 def load_model(model_path):
-    model = torch.hub.load('facebookresearch/detr', 'detr_resnet101', pretrained=False)
+    # Use the panoptic version so we get segmentation masks
+    model = torch.hub.load('facebookresearch/detr', 'detr_resnet101_panoptic', pretrained=False)
     checkpoint = torch.load(model_path, map_location='cpu')
-    # Load the state_dict from the backbone dictionary, handling the multi-GPU case
+
+    # Adjust if your checkpoint uses "detr." prefix or not
     state_dict = OrderedDict()
     for k, v in checkpoint["model"].items():
+        # If the keys contain "detr.", remove that prefix
         if "detr." in k:
             k_n = k.replace("detr.", "")
             state_dict[k_n] = v
         else:
-            break
+            # Just in case some keys do not have "detr."
+            state_dict[k] = v
 
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=False)
     model.eval()
 
     return model
 
-def box_cxcywh_to_xyxy(x):
-    x_c, y_c, w, h = x.unbind(1)
-    b = [(x_c - 0.5 * w), (y_c - 0.5 * h),
-         (x_c + 0.5 * w), (y_c + 0.5 * h)]
-    return torch.stack(b, dim=1)
+def plot_segmentations(img, masks):
+    """
+    Overlays segmentation masks on the image with partial opacity.
+    If you want unique colors for each mask, you can iterate over COLORS.
+    """
+    rgba_img = img.convert('RGBA')
+    w, h = rgba_img.size
 
-def rescale_bboxes(out_bbox, size):
-    img_w, img_h = size
-    b = box_cxcywh_to_xyxy(out_bbox)
-    b = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32)
-    return b
+    for i, mask in enumerate(masks):
+        # Threshold the mask, making it binary
+        bin_mask = (mask > 0.5).cpu().numpy().astype(np.uint8) * 255
 
-def plot_results(pil_img, prob, boxes):
-    draw = ImageDraw.Draw(pil_img)
-    colors = COLORS * 100
-    for p, (xmin, ymin, xmax, ymax), c in zip(prob, boxes.tolist(), colors):
-        draw.rectangle([(xmin, ymin), (xmax, ymax)], outline=tuple(int(255 * x) for x in c), width=3)
-        cl = p.argmax()
-        text = f'{CLASSES[cl]}: {p[cl]:0.2f}'
-        draw.text((xmin, ymin), text, fill=(255, 255, 255, 255))
-    return pil_img
+        # Convert binary mask to the same size as the image
+        mask_img = Image.fromarray(bin_mask, mode='L').resize((w, h))
+        # Pick a semi-transparent color
+        color = COLORS[i % len(COLORS)]
+        overlay = Image.new('RGBA', (w, h), (
+            int(color[0]*255),
+            int(color[1]*255),
+            int(color[2]*255),
+            100
+        ))
+        rgba_img = Image.composite(overlay, rgba_img, mask_img)
+
+    return rgba_img
 
 def main(args):
     model = load_model(args.model_path)
@@ -80,16 +87,24 @@ def main(args):
     img_transformed = transform(img).unsqueeze(0)
 
     outputs = model(img_transformed)
+
+    # Panoptic DETR has 'pred_logits' and 'pred_masks'
+    # pred_logits: [batch_size, num_queries, num_classes]
+    # pred_masks:  [batch_size, num_queries, H, W]
     probas = outputs['pred_logits'].softmax(-1)[0, :, :-1]
     keep = probas.max(-1).values > 0.1
-    bboxes_scaled = rescale_bboxes(outputs['pred_boxes'][0, keep], img.size)
-    result_img = plot_results(img, probas[keep], bboxes_scaled)
+
+    # Keep only masks whose associated query has confidence above threshold
+    masks = outputs['pred_masks'][0, keep]
+
+    # Plot segmentations
+    result_img = plot_segmentations(img, masks)
     result_img.save(args.output_path)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="DETR inference script")
-    parser.add_argument("--model_path", required=True, help="Path to the model checkpoint (.pth file)")
+    parser = argparse.ArgumentParser(description="DETR panoptic inference script")
+    parser.add_argument("--model_path", required=True, help="Path to the panoptic DETR checkpoint (.pth file)")
     parser.add_argument("--image_path", required=True, help="Path to the input image")
-    parser.add_argument("--output_path", required=True, help="Path to save the output image with detections")
+    parser.add_argument("--output_path", required=True, help="Path to save the output image with segmentations")
     args = parser.parse_args()
     main(args)
