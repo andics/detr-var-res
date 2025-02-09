@@ -36,48 +36,62 @@ transform = T.Compose([
 
 def load_model(model_path):
     # Use the panoptic version so we get segmentation masks
-    model = torch.hub.load('facebookresearch/detr', 'detr_resnet101_panoptic', pretrained=False)
+    model = torch.hub.load('facebookresearch/detr', 'detr_resnet101_panoptic', num_classes=91, pretrained=False)
     checkpoint = torch.load(model_path, map_location='cpu')
 
     # Adjust if your checkpoint uses "detr." prefix or not
     state_dict = OrderedDict()
     for k, v in checkpoint["model"].items():
-        # If the keys contain "detr.", remove that prefix
         if "detr." in k:
             k_n = k.replace("detr.", "")
             state_dict[k_n] = v
         else:
-            # Just in case some keys do not have "detr."
             state_dict[k] = v
 
-    model.load_state_dict(state_dict, strict=False)
+    model.load_state_dict(checkpoint["model"])
     model.eval()
 
     return model
 
-def plot_segmentations(img, masks):
+def plot_segmentations_with_text(img, masks, probas):
     """
-    Overlays segmentation masks on the image with partial opacity.
-    If you want unique colors for each mask, you can iterate over COLORS.
+    Overlays the selected segmentation masks on the image with partial opacity
+    and adds a text label for each mask.
     """
     rgba_img = img.convert('RGBA')
+    draw = ImageDraw.Draw(rgba_img)
     w, h = rgba_img.size
 
     for i, mask in enumerate(masks):
         # Threshold the mask, making it binary
-        bin_mask = (mask > 0.5).cpu().numpy().astype(np.uint8) * 255
-
-        # Convert binary mask to the same size as the image
+        bin_mask = (mask > 0.03).cpu().numpy().astype(np.uint8) * 255
         mask_img = Image.fromarray(bin_mask, mode='L').resize((w, h))
+
         # Pick a semi-transparent color
         color = COLORS[i % len(COLORS)]
         overlay = Image.new('RGBA', (w, h), (
             int(color[0]*255),
             int(color[1]*255),
             int(color[2]*255),
-            100
+            80
         ))
         rgba_img = Image.composite(overlay, rgba_img, mask_img)
+
+        # Find bounding box for the mask (for text placement)
+        np_mask = np.array(mask_img)
+        ys, xs = np.where(np_mask > 0)
+        if len(xs) == 0 or len(ys) == 0:
+            continue
+        xmin, xmax = xs.min(), xs.max()
+        ymin, ymax = ys.min(), ys.max()
+
+        # Determine class label
+        class_idx = probas[i].argmax().item()
+        score = probas[i][class_idx].item()
+        label_text = f"{CLASSES[class_idx]}: {score:.2f}"
+
+        # Draw label near bounding box
+        draw.text((xmin, ymin), label_text, fill=(255, 255, 255, 255))
 
     return rgba_img
 
@@ -87,22 +101,22 @@ def main(args):
     img_transformed = transform(img).unsqueeze(0)
 
     outputs = model(img_transformed)
-
-    # Panoptic DETR has 'pred_logits' and 'pred_masks'
+    # We want the two MOST confident proposals
     # pred_logits: [batch_size, num_queries, num_classes]
     # pred_masks:  [batch_size, num_queries, H, W]
-    probas = outputs['pred_logits'].softmax(-1)[0, :, :-1]
-    keep = probas.max(-1).values > 0.1
+    probas = outputs['pred_logits'].softmax(-1)[0, :, :-1]         # ignore no-object
+    scores = probas.max(dim=1).values                              # shape: [num_queries]
+    top_scores, top_inds = scores.topk(2)                          # pick top-2
+    # Extract top-2 masks and their probabilities
+    masks = outputs['pred_masks'][0, top_inds]                     # shape: [2, H, W]
+    top_probas = probas[top_inds]
 
-    # Keep only masks whose associated query has confidence above threshold
-    masks = outputs['pred_masks'][0, keep]
-
-    # Plot segmentations
-    result_img = plot_segmentations(img, masks)
+    # Plot segmentations with text
+    result_img = plot_segmentations_with_text(img, masks, top_probas)
     result_img.save(args.output_path)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="DETR panoptic inference script")
+    parser = argparse.ArgumentParser(description="DETR panoptic inference script (top-2 proposals)")
     parser.add_argument("--model_path", required=True, help="Path to the panoptic DETR checkpoint (.pth file)")
     parser.add_argument("--image_path", required=True, help="Path to the input image")
     parser.add_argument("--output_path", required=True, help="Path to save the output image with segmentations")
