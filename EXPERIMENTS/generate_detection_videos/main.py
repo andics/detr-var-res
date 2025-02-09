@@ -1,5 +1,8 @@
 import torch
+
 from PIL import Image, ImageDraw
+from collections import OrderedDict
+
 import torchvision.transforms as T
 import argparse
 
@@ -33,10 +36,20 @@ transform = T.Compose([
 ])
 
 def load_model(model_path):
-    model = torch.hub.load('facebookresearch/detr', 'detr_resnet50', pretrained=False)
+    model = torch.hub.load('facebookresearch/detr', 'detr_resnet101', pretrained=False)
     checkpoint = torch.load(model_path, map_location='cpu')
-    model.load_state_dict(checkpoint["model"])
+    # Load the state_dict from the backbone dictionary, handling the multi-GPU case
+    state_dict = OrderedDict()
+    for k, v in checkpoint["model"].items():
+        if "detr." in k:
+            k_n = k.replace("detr.", "")
+            state_dict[k_n] = v
+        else:
+            break
+
+    model.load_state_dict(state_dict)
     model.eval()
+
     return model
 
 def box_cxcywh_to_xyxy(x):
@@ -68,7 +81,7 @@ def main(args):
 
     outputs = model(img_transformed)
     probas = outputs['pred_logits'].softmax(-1)[0, :, :-1]
-    keep = probas.max(-1).values > 0.7
+    keep = probas.max(-1).values > 0.1
     bboxes_scaled = rescale_bboxes(outputs['pred_boxes'][0, keep], img.size)
     result_img = plot_results(img, probas[keep], bboxes_scaled)
     result_img.save(args.output_path)
