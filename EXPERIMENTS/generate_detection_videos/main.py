@@ -4,6 +4,7 @@ from collections import OrderedDict
 import torchvision.transforms as T
 import argparse
 import numpy as np
+import matplotlib.pyplot as plt
 
 # Define the colors for visualization (used for semi-transparent overlays)
 COLORS = [[0.000, 0.447, 0.741], [0.850, 0.325, 0.098], [0.929, 0.694, 0.125],
@@ -106,19 +107,52 @@ def main(args):
     # pred_masks:  [batch_size, num_queries, H, W]
     probas = outputs['pred_logits'].softmax(-1)[0, :, :-1]         # ignore no-object
     scores = probas.max(dim=1).values                              # shape: [num_queries]
-    top_scores, top_inds = scores.topk(2)                          # pick top-2
-    # Extract top-2 masks and their probabilities
-    masks = outputs['pred_masks'][0, top_inds]                     # shape: [2, H, W]
+    top_scores, top_inds = scores.topk(3)                          # pick top-3 instead of top-2
+    # Extract top-3 masks and their probabilities
+    masks = outputs['pred_masks'].sigmoid()[0, top_inds]           # Apply sigmoid to convert logits to probabilities
     top_probas = probas[top_inds]
 
     # Plot segmentations with text
-    result_img = plot_segmentations_with_text(img, masks, top_probas)
-    result_img.save(args.output_path)
+    plt.figure(figsize=(15, 10))
+    plt.imshow(img)
+
+    for i, (mask, prob) in enumerate(zip(masks, top_probas)):
+        # Create binary mask
+        bin_mask = (mask > 0.03).cpu().numpy()
+        
+        # Add colored overlay
+        color = np.array(COLORS[i % len(COLORS)])
+        plt.imshow(np.ones_like(np.array(img)) * color, alpha=0.1 * bin_mask)  # Reduce alpha for better visibility
+        
+        # Add text label with improved visibility
+        y, x = np.where(bin_mask)
+        if len(y) > 0 and len(x) > 0:
+            centroid_y = int(np.mean(y))
+            centroid_x = int(np.mean(x))
+            
+            class_idx = prob.argmax().item()
+            score = prob[class_idx].item()
+            label_text = f"{CLASSES[class_idx]}\n{score:.2f}"
+            
+            plt.text(centroid_x, centroid_y, label_text,
+                    color='lime',
+                    fontsize=24,
+                    fontweight='bold',
+                    bbox=dict(facecolor='black',
+                            alpha=0.7,
+                            edgecolor='lime',
+                            pad=1.0),
+                    ha='center',
+                    va='center')
+    
+    plt.axis('off')
+    plt.savefig(args.output_path, bbox_inches='tight', pad_inches=0)
+    plt.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="DETR panoptic inference script (top-2 proposals)")
     parser.add_argument("--model_path", required=True, help="Path to the panoptic DETR checkpoint (.pth file)")
     parser.add_argument("--image_path", required=True, help="Path to the input image")
     parser.add_argument("--output_path", required=True, help="Path to save the output image with segmentations")
-    args = parser.parse_args()
+    args = parser.parseArgs()
     main(args)
